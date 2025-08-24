@@ -15,7 +15,6 @@ jobs:
     name: Build IPA (unsigned or signed)
     runs-on: macos-14
 
-    # Map secrets to env so we can safely use them in `if:` expressions
     env:
       IOS_BUNDLE_ID: com.example.app
       P12_BASE64: ${{ secrets.P12_BASE64 }}
@@ -40,18 +39,37 @@ jobs:
           flutter-version: stable
           cache: true
 
-      - name: Flutter Pub Get
+      - name: Flutter Doctor (diagnostics)
+        run: |
+          flutter --version
+          flutter doctor -v
+          xcodebuild -version || true
+          sw_vers || true
+
+      - name: Pub get
         run: flutter pub get
 
-      - name: Install CocoaPods
+      # If your repo doesn’t have iOS platform files (Podfile, Runner, etc.), create them now.
+      - name: Ensure iOS platform exists
         run: |
-          sudo gem install cocoapods -N
-          cd ios && pod install --repo-update
+          if [ ! -d "ios" ] || [ ! -f "ios/Runner.xcworkspace/contents.xcworkspacedata" ] && [ ! -f "ios/Runner.xcodeproj/project.pbxproj" ]; then
+            echo "No iOS project found – creating iOS platform..."
+            flutter create --platforms=ios .
+          fi
 
-      # ---------- OPTION A: Unsigned IPA (no signing assets provided) ----------
+      # Only run CocoaPods if a Podfile exists in the repo or was just generated.
+      - name: Install CocoaPods (only if Podfile exists)
+        if: ${{ hashFiles('ios/Podfile') != '' }}
+        run: |
+          pod --version || sudo gem install cocoapods -N
+          cd ios
+          pod repo update
+          pod install
+
+      # ---------- OPTION A: Unsigned IPA ----------
       - name: Build IPA (unsigned)
         if: ${{ env.P12_BASE64 == '' || env.MOBILEPROVISION_BASE64 == '' }}
-        run: flutter build ipa --no-codesign
+        run: flutter build ipa --no-codesign --verbose
 
       - name: Upload Unsigned IPA
         if: ${{ env.P12_BASE64 == '' || env.MOBILEPROVISION_BASE64 == '' }}
@@ -60,7 +78,7 @@ jobs:
           name: ios-ipa-unsigned
           path: build/ios/ipa/*.ipa
 
-      # ---------- OPTION B: Signed IPA (all signing assets provided) ----------
+      # ---------- OPTION B: Signed IPA ----------
       - name: Import signing certs & profiles
         if: ${{ env.P12_BASE64 != '' && env.MOBILEPROVISION_BASE64 != '' }}
         uses: apple-actions/import-codesign-certs@v3
@@ -98,7 +116,7 @@ jobs:
 
       - name: Build IPA (signed)
         if: ${{ env.P12_BASE64 != '' && env.MOBILEPROVISION_BASE64 != '' }}
-        run: flutter build ipa --export-options-plist=ExportOptions.plist
+        run: flutter build ipa --export-options-plist=ExportOptions.plist --verbose
 
       - name: Upload Signed IPA
         if: ${{ env.P12_BASE64 != '' && env.MOBILEPROVISION_BASE64 != '' }}
