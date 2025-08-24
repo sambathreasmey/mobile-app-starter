@@ -69,14 +69,20 @@ jobs:
       # ---------- OPTION A: Unsigned IPA ----------
       - name: Build IPA (unsigned)
         if: ${{ env.P12_BASE64 == '' || env.MOBILEPROVISION_BASE64 == '' }}
-        run: flutter build ipa --no-codesign --verbose
-
-      - name: Upload Unsigned IPA
-        if: ${{ env.P12_BASE64 == '' || env.MOBILEPROVISION_BASE64 == '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-ipa-unsigned
-          path: build/ios/ipa/*.ipa
+        run: |
+          flutter build ios --release --no-codesign
+          xcodebuild -exportArchive \
+            -archivePath build/ios/archive/Runner.xcarchive \
+            -exportPath build/ios/ipa \
+            -exportOptionsPlist <(echo '<?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+              <key>method</key><string>ad-hoc</string>
+              <key>compileBitcode</key><false/>
+              <key>signingStyle</key><string>manual</string>
+            </dict>
+            </plist>')
 
       # ---------- OPTION B: Signed IPA ----------
       - name: Import signing certs & profiles
