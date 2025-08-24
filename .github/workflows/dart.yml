@@ -14,9 +14,16 @@ jobs:
   ios:
     name: Build IPA (unsigned or signed)
     runs-on: macos-14
+
+    # Map secrets to env so we can safely use them in `if:` expressions
     env:
-      # Set your bundle id if you’ll sign; ignored for unsigned
       IOS_BUNDLE_ID: com.example.app
+      P12_BASE64: ${{ secrets.P12_BASE64 }}
+      P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+      MOBILEPROVISION_BASE64: ${{ secrets.MOBILEPROVISION_BASE64 }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      IOS_PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,35 +48,29 @@ jobs:
           sudo gem install cocoapods -N
           cd ios && pod install --repo-update
 
-      # ---------- OPTION A: Unsigned IPA (no secrets required) ----------
+      # ---------- OPTION A: Unsigned IPA (no signing assets provided) ----------
       - name: Build IPA (unsigned)
-        if: ${{ !secrets.P12_BASE64 || !secrets.MOBILEPROVISION_BASE64 }}
+        if: ${{ env.P12_BASE64 == '' || env.MOBILEPROVISION_BASE64 == '' }}
         run: flutter build ipa --no-codesign
 
       - name: Upload Unsigned IPA
-        if: ${{ !secrets.P12_BASE64 || !secrets.MOBILEPROVISION_BASE64 }}
+        if: ${{ env.P12_BASE64 == '' || env.MOBILEPROVISION_BASE64 == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa-unsigned
           path: build/ios/ipa/*.ipa
 
-      # ---------- OPTION B: Signed IPA (requires secrets) ----------
-      # Secrets needed:
-      #   P12_BASE64            -> base64 of your .p12 certificate
-      #   P12_PASSWORD          -> password of that .p12
-      #   MOBILEPROVISION_BASE64-> base64 of your .mobileprovision
-      #   APPLE_TEAM_ID         -> e.g. ABCDE12345
-      #   IOS_PROFILE_NAME      -> (optional) profile name used below; default AppStoreProfile
+      # ---------- OPTION B: Signed IPA (all signing assets provided) ----------
       - name: Import signing certs & profiles
-        if: ${{ secrets.P12_BASE64 && secrets.MOBILEPROVISION_BASE64 }}
+        if: ${{ env.P12_BASE64 != '' && env.MOBILEPROVISION_BASE64 != '' }}
         uses: apple-actions/import-codesign-certs@v3
         with:
-          p12-file-base64: ${{ secrets.P12_BASE64 }}
-          p12-password: ${{ secrets.P12_PASSWORD }}
-          mobileprovision-file-base64: ${{ secrets.MOBILEPROVISION_BASE64 }}
+          p12-file-base64: ${{ env.P12_BASE64 }}
+          p12-password: ${{ env.P12_PASSWORD }}
+          mobileprovision-file-base64: ${{ env.MOBILEPROVISION_BASE64 }}
 
       - name: Create ExportOptions.plist (App Store)
-        if: ${{ secrets.P12_BASE64 && secrets.MOBILEPROVISION_BASE64 }}
+        if: ${{ env.P12_BASE64 != '' && env.MOBILEPROVISION_BASE64 != '' }}
         run: |
           cat > ExportOptions.plist <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -91,16 +92,16 @@ jobs:
           </plist>
           PLIST
         env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TEAM_ID: ${{ env.APPLE_TEAM_ID }}
           BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
-          PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME || 'AppStoreProfile' }}
+          PROFILE_NAME: ${{ env.IOS_PROFILE_NAME || 'AppStoreProfile' }}
 
       - name: Build IPA (signed)
-        if: ${{ secrets.P12_BASE64 && secrets.MOBILEPROVISION_BASE64 }}
+        if: ${{ env.P12_BASE64 != '' && env.MOBILEPROVISION_BASE64 != '' }}
         run: flutter build ipa --export-options-plist=ExportOptions.plist
 
       - name: Upload Signed IPA
-        if: ${{ secrets.P12_BASE64 && secrets.MOBILEPROVISION_BASE64 }}
+        if: ${{ env.P12_BASE64 != '' && env.MOBILEPROVISION_BASE64 != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa-signed
