@@ -132,3 +132,36 @@ jobs:
         with:
           name: ios-ipa-signed
           path: build/ios/ipa/*.ipa
+
+  release:
+    name: Publish GitHub Release (attach IPA)
+    needs: ios
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Download signed IPA (if present)
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-ipa-signed
+          path: dist
+        continue-on-error: true
+
+      - name: Download unsigned IPA (if present)
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-ipa-unsigned
+          path: dist
+        continue-on-error: true
+
+      - name: List files (debug)
+        run: ls -R dist || true
+
+      - name: Create Release and upload IPA(s)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**/*.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
