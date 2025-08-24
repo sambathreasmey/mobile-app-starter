@@ -1,63 +1,22 @@
-name: Flutter CI (Android + iOS)
+name: iOS IPA (Flutter)
 
 on:
   push:
     branches: [ main, master ]
     tags: [ 'v*' ]
-  pull_request:
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 concurrency:
-  group: flutter-${{ github.ref }}
+  group: ios-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  android:
-    name: Android (APK & AAB)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: stable
-          cache: true
-
-      - name: Flutter Pub Get
-        run: flutter pub get
-
-      - name: Build APK (release)
-        run: flutter build apk --release
-
-      - name: Build AAB (Play Store)
-        run: flutter build appbundle --release
-
-      - name: Upload Android Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-builds
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/app/outputs/bundle/release/app-release.aab
-
   ios:
-    name: iOS (Unsigned & Signed)
+    name: Build IPA (unsigned or signed)
     runs-on: macos-14
     env:
-      # Set your iOS bundle id here or pass via repo env
+      # Set your bundle id if you’ll sign; ignored for unsigned
       IOS_BUNDLE_ID: com.example.app
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -82,26 +41,26 @@ jobs:
           sudo gem install cocoapods -N
           cd ios && pod install --repo-update
 
-      # ---------- OPTION A: Unsigned archive (quick CI) ----------
-      - name: Build iOS (no codesign)
-        run: |
-          flutter build ipa --no-codesign
+      # ---------- OPTION A: Unsigned IPA (no secrets required) ----------
+      - name: Build IPA (unsigned)
+        if: ${{ !secrets.P12_BASE64 || !secrets.MOBILEPROVISION_BASE64 }}
+        run: flutter build ipa --no-codesign
 
-      - name: Upload Unsigned IPA/xcarchive
+      - name: Upload Unsigned IPA
+        if: ${{ !secrets.P12_BASE64 || !secrets.MOBILEPROVISION_BASE64 }}
         uses: actions/upload-artifact@v4
         with:
-          name: ios-unsigned
-          path: |
-            build/ios/ipa/*.ipa
-            build/ios/archive/*.xcarchive
-        if: always()
+          name: ios-ipa-unsigned
+          path: build/ios/ipa/*.ipa
 
       # ---------- OPTION B: Signed IPA (requires secrets) ----------
-      # 1) Generate/export a .p12 signing cert and a .mobileprovision
-      # 2) Base64-encode them and save in repo secrets:
-      #    P12_BASE64, P12_PASSWORD, MOBILEPROVISION_BASE64
-      #    Optionally: APPLE_TEAM_ID, APPLE_SIGNING_IDENTITY
-      - name: Import signing certificate
+      # Secrets needed:
+      #   P12_BASE64            -> base64 of your .p12 certificate
+      #   P12_PASSWORD          -> password of that .p12
+      #   MOBILEPROVISION_BASE64-> base64 of your .mobileprovision
+      #   APPLE_TEAM_ID         -> e.g. ABCDE12345
+      #   IOS_PROFILE_NAME      -> (optional) profile name used below; default AppStoreProfile
+      - name: Import signing certs & profiles
         if: ${{ secrets.P12_BASE64 && secrets.MOBILEPROVISION_BASE64 }}
         uses: apple-actions/import-codesign-certs@v3
         with:
@@ -109,10 +68,9 @@ jobs:
           p12-password: ${{ secrets.P12_PASSWORD }}
           mobileprovision-file-base64: ${{ secrets.MOBILEPROVISION_BASE64 }}
 
-      - name: Build iOS (signed IPA)
+      - name: Create ExportOptions.plist (App Store)
         if: ${{ secrets.P12_BASE64 && secrets.MOBILEPROVISION_BASE64 }}
         run: |
-          # Create ExportOptions for App Store or AdHoc (choose one)
           cat > ExportOptions.plist <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -124,37 +82,26 @@ jobs:
             <key>signingStyle</key><string>manual</string>
             <key>stripSwiftSymbols</key><true/>
             <key>uploadSymbols</key><true/>
-            <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
             <key>provisioningProfiles</key>
             <dict>
-              <key>${IOS_BUNDLE_ID}</key><string>${{ env.IOS_PROFILE_NAME || 'AppStoreProfile' }}</string>
+              <key>${BUNDLE_ID}</key><string>${PROFILE_NAME}</string>
             </dict>
           </dict>
           </plist>
           PLIST
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
+          PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME || 'AppStoreProfile' }}
 
-          # Build & export signed IPA using Flutter's xcode backend
-          flutter build ipa --export-options-plist=ExportOptions.plist
+      - name: Build IPA (signed)
+        if: ${{ secrets.P12_BASE64 && secrets.MOBILEPROVISION_BASE64 }}
+        run: flutter build ipa --export-options-plist=ExportOptions.plist
 
       - name: Upload Signed IPA
         if: ${{ secrets.P12_BASE64 && secrets.MOBILEPROVISION_BASE64 }}
         uses: actions/upload-artifact@v4
         with:
-          name: ios-signed
+          name: ios-ipa-signed
           path: build/ios/ipa/*.ipa
-
-  release:
-    name: Publish Release (when tag v*)
-    needs: [android, ios]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: false
-          prerelease: false
-          files: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/app/outputs/bundle/release/app-release.aab
-            build/ios/ipa/*.ipa
